@@ -10,5 +10,15 @@
     "resource.h": "9641ad44d3b036019c80ca7d75e85eb6a4347184b139f345279fa60c3772a298",
     "syscall.h": "d7da6bab9cc84a34e0b23cfc644dc19334cce868b2b189ffd8baa0b195232a46",
     "event.h": "210586e4b1e86123b2f14a1d15f2f71918da7993a54ae93cde792063f96d1826"
+  },
+  "extensions": {
+    "devices": {
+      "repository": "https://github.com/Evan-Windproof/Liberums",
+      "commit": "5d9c8f35a4ae54ef08b93b7f4d5fecd9e350acbf",
+      "sha256": {
+        "vga.h": "bcaf47ddab8d179334b1908fb1583eb7db781f95bff5bf5053590d5906552424",
+        "keyboard.h": "8ff0f4239e88fc4042430c5c720e5655288b0318f9b4ac519fe2facaa3ad7791"
+      }
+    }
   }
 }

@@ -1,7 +1,7 @@
 # Aelthuvor — a user-mode LibOS for Liberums
 
 独立的 C11/i686 Library OS，以静态 ELF32 运行于 Liberums Ring 3。GPL-3.0-or-later。
-Phase 1 提供用户态页面与块分配；Phase 2 增加 ABI 1.2、抢占 Profile 与 Visible Revocation 客户端。
+Phase 1 提供用户态页面与块分配；Phase 2 增加 ABI 1.2、抢占与撤销；Phase 3 增加 VGA/PS2 模块和独立 Console。
 Aelthuvor 决定分配策略，Liberums 决定资源保护与 CPU 仲裁。两仓库独立构建，不链接内核私有对象。
 
 ## 独立构建
@@ -16,6 +16,8 @@ make -j2                # 默认仍是 cooperative first-fit，build/aelthuvor.e
 make test               # 四种构建 + SDK 负测试 + 两个 sanitizer 测试程序
 make profiles           # first / best / preempt-first / preempt-best ELF
 make abi11              # 从固定 Phase 1 Git 提交和原 SDK 重建历史 ELF
+make console            # build/ael-console.elf，Preemptive first-fit
+make build/console-best.elf # 可选 best-fit Console
 ```
 
 | ELF（build/） | 执行方式 | Required features |
@@ -58,10 +60,33 @@ make -C ../Liberums run QEMU_APPEND='external preempt' \
 真实 QEMU/GDB 已验证双 Profile、两种策略、IRQ/Peer/寄存器恢复、ABI 1.1 历史映像、隔离和清零回收。
 撤销客户端已通过宿主模拟；真正的外部 Aelthuvor 撤销端到端场景尚无内核触发入口，未验证。
 
-不提供 POSIX、文件系统、网络、线程、SMP、动态链接、透明指针迁移或通用用户异常恢复。
+Console 支持 help/clear/about/status/memtest/exit、US 键盘编辑、滚动和光标。它静态链接同一域内的 LibOS，
+不提供通用 Shell、多外部 ELF 并发或 IPC，也不提供 POSIX、文件系统、网络、线程、SMP、动态链接或透明指针迁移。
 普通 i686 无 NX，不承诺完整 W^X。原始指针复用后不能区分旧/新对象。
 
 阅读：[Phase 2 总览](docs/phase2-overview.md) → [架构](docs/architecture.md) →
 [ABI](docs/phase2-abi.md) → [抢占](docs/phase2-preemption.md) →
 [撤销](docs/phase2-revocation.md) → [模块](docs/phase2-modules.md) →
 [实际验收](docs/phase2-validation.md)。[Phase 1 验收](docs/phase1-validation.md)保留为历史记录。
+
+## Phase 3 Console
+
+核心 SDK 仍固定在 Phase 6；两个可选设备头单独固定至 Phase 7.3，见 manifest.extensions。
+INFO 探测与可信启动 grant 分开；没有新增 feature bit，默认内存程序不取得设备。
+
+两个 checkout 同级且已有匹配的内核 ELF 时：
+
+```sh
+make console
+make -C ../Liberums run-external-console \
+  CONSOLE_ELF=../Aelthuvor/build/ael-console.elf
+make console-integration LIBERUMS=../Liberums
+```
+
+修改 Console 只需重建 Aelthuvor，运行目标不会重新链接内核。
+云端通过 QMP 注入真实 PS/2 事件，检查 IRQ1/用户态/VGA 并保存渲染截图；
+本地 WSL2 GTK 实体键盘交互仍待维护者确认。普通 RAM 撤销 E2E 仍未补齐，不以设备撤销测试代替。
+
+阅读：[Phase 3 总览](docs/phase3-overview.md)、[设备 ABI](docs/phase3-device-abi.md)、
+[Console 与启动](docs/phase3-console.md)、[内存协作](docs/phase3-memory-integration.md)、
+[模块](docs/phase3-modules.md)、[实际验收](docs/phase3-validation.md)。

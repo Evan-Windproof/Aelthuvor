@@ -61,13 +61,50 @@ profiles: all build/best.elf build/preempt-first.elf build/preempt-best.elf
 abi11:
 	$(PYTHON) tests/legacy_build.py
 
-test: profiles build/memory-tests build/revoke-tests
+test: profiles console build/memory-tests build/revoke-tests build/device-tests
 	$(PYTHON) tests/sdk_tests.py
 	./build/memory-tests
 	./build/revoke-tests
+	./build/device-tests
 integration: abi11 all $(addprefix build/,$(addsuffix .elf,$(VARIANTS)))
 	$(PYTHON) tests/integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"
 clean:
 	rm -rf build
 .SECONDARY:
 -include $(OBJECTS:.o=.d) build/tests/memory_checks.d
+
+DEVICE_SOURCES := src/vga.c src/keyboard.c src/text.c
+DEVICE_OBJECTS := $(DEVICE_SOURCES:%.c=build/%.o)
+CONSOLE_HEADERS := $(wildcard include/aelthuvor/*.h sdk/include/abi/*.h) apps/console/console.h
+.PHONY: console console-integration
+console: check-sdk build/ael-console.elf
+build/ael-console.elf: build/console.elf
+	cp $< $@
+build/console/runtime.o build/console-best/runtime.o: VARIANT_FLAGS = -DAEL_PREEMPTIVE_BUILD
+build/console-best/runtime.o: VARIANT_FLAGS += -DAEL_BEST_FIT_BUILD
+build/console/main.o: apps/console/main.c $(CONSOLE_HEADERS) Makefile
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/console-test/main.o: apps/console/main.c $(CONSOLE_HEADERS) Makefile
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DAEL_CONSOLE_DIAGNOSTIC -c $< -o $@
+build/console/app.o: apps/console/console.c $(CONSOLE_HEADERS) Makefile
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/console.elf build/console-best.elf: build/console/main.o build/console/app.o $(DEVICE_OBJECTS) build/startup.o build/libaelthuvor.a linker.ld
+build/console.elf: build/console/runtime.o
+build/console-best.elf: build/console-best/runtime.o
+build/console-test.elf: build/console-test/main.o build/console/app.o $(DEVICE_OBJECTS) build/console/runtime.o build/startup.o build/libaelthuvor.a linker.ld
+build/console.elf build/console-best.elf build/console-test.elf:
+	$(LD) -m elf_i386 -nostdlib --build-id=none -T linker.ld -Map=$(@:.elf=.map) $(filter %.o,$^) $(filter %.a,$^) -o $@
+build/device-tests: tests/device_tests.c apps/console/console.c $(DEVICE_SOURCES) src/memory.c src/page.c src/compat.c src/revoke.c $(CONSOLE_HEADERS) Makefile
+	mkdir -p build
+	$(HOST_CC) -std=c11 -g -O1 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer $(CPPFLAGS) -Iapps/console $(filter %.c,$^) -o $@
+console-integration: console build/console-best.elf build/console-test.elf build/device-probe.elf
+	$(PYTHON) tests/console_integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"
+
+build/console/device-probe.o: apps/console/device_probe.c $(CONSOLE_HEADERS) Makefile
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/device-probe.elf: build/console/device-probe.o $(DEVICE_OBJECTS) build/console/runtime.o build/startup.o build/libaelthuvor.a linker.ld
+	$(LD) -m elf_i386 -nostdlib --build-id=none -T linker.ld -Map=$(@:.elf=.map) $(filter %.o,$^) $(filter %.a,$^) -o $@

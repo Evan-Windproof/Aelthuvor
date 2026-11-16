@@ -13,18 +13,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def check(source=None, working=True):
     manifest = json.loads((ROOT / 'sdk/manifest.json').read_text())
-    if not re.fullmatch('[0-9a-f]{40}', manifest['commit']):
-        raise ValueError('SDK source must be an exact commit')
+    sources = [manifest] + list(manifest.get('extensions', {}).values())
+    files = {}
+    for origin in sources:
+        if not re.fullmatch('[0-9a-f]{40}', origin['commit']):
+            raise ValueError('SDK source must be an exact commit')
+        for name, digest in origin['sha256'].items():
+            if name in files or not re.fullmatch(r'[a-z]+[.]h', name):
+                raise ValueError('SDK duplicate or invalid file')
+            files[name] = (digest, origin['commit'])
     directory = ROOT / 'sdk/include/abi'
-    if set(p.name for p in directory.iterdir()) != set(manifest['sha256']):
+    if set(p.name for p in directory.iterdir()) != set(files):
         raise ValueError('SDK file set drifted')
-    for name, digest in manifest['sha256'].items():
+    for name, (digest, commit) in files.items():
         data = (directory / name).read_bytes()
         if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError('SDK hash mismatch: ' + name)
         if source is not None:
             pinned = subprocess.check_output(['git', '-C', str(source), 'show',
-                       manifest['commit'] + ':include/abi/' + name])
+                       commit + ':include/abi/' + name])
             if pinned != data or (working and (source / 'include/abi' / name).read_bytes() != data):
                 raise ValueError('SDK differs from pinned or working source: ' + name)
     header = (directory / 'syscall.h').read_text()
