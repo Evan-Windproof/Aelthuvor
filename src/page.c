@@ -6,7 +6,7 @@ static int valid_page(struct ael_page_pool *pool, struct ael_page *page)
     if (pool != NULL) {
         for (unsigned i = 0; i < AEL_PAGE_SLOTS; ++i) {
             if (page == &pool->pages[i]) {
-                return page->owned != 0;
+                return page->owned && (page->state == AEL_PAGE_OWNED || page->state == AEL_PAGE_MAPPED);
             }
         }
     }
@@ -43,7 +43,7 @@ int ael_page_claim(struct ael_page_pool *pool, struct ael_page **out)
         if (index < 0) {
             return index;
         }
-        *page = (struct ael_page){.handle = {(uint32_t)index, generation}, .owned = 1};
+        *page = (struct ael_page){.handle = {(uint32_t)index, generation}, .owned = 1, .state = AEL_PAGE_OWNED};
         ++pool->owned;
         *out = page;
         return 0;
@@ -72,6 +72,7 @@ int ael_page_map(struct ael_page_pool *pool, struct ael_page *page)
         }
         page->address = address;
         page->mapped = 1;
+        page->state = AEL_PAGE_MAPPED;
         return 0;
     }
     return RES_ENOSPC;
@@ -87,6 +88,7 @@ int ael_page_unmap(struct ael_page_pool *pool, struct ael_page *page)
     }
     int error = ael_call(SYS_PAGE_UNMAP, (uint32_t)page->address, 0, 0, 0, NULL);
     if (error == 0) {
+        page->state = AEL_PAGE_OWNED;
         page->mapped = 0;
         page->address = 0;
     }
@@ -102,8 +104,7 @@ int ael_page_release(struct ael_page_pool *pool, struct ael_page *page)
      * an error must leave enough metadata to retry or let domain teardown act. */
     int error = ael_call(SYS_PAGE_RELEASE, page->handle.index, page->handle.generation, 0, 0, NULL);
     if (error == 0) {
-        *page = (struct ael_page){0};
-        --pool->owned;
+        ael_page_retire(pool, page, AEL_PAGE_RELEASED);
     }
     return error;
 }
@@ -122,4 +123,14 @@ int ael_page_acquire(struct ael_page_pool *pool, struct ael_page **out)
         }
     }
     return error;
+}
+
+void ael_page_retire(struct ael_page_pool *pool, struct ael_page *page, enum ael_page_state state)
+{
+    if (page->owned) {
+        --pool->owned;
+    }
+    page->owned = page->mapped = 0;
+    page->address = 0;
+    page->state = state;
 }

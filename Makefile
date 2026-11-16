@@ -16,11 +16,11 @@ CFLAGS := $(ARCH) -std=c11 -ffreestanding -fno-builtin -fno-pic -fno-pie \
           -fno-stack-protector -fno-common -fno-asynchronous-unwind-tables \
           -fno-unwind-tables -fno-omit-frame-pointer -g3 -O2 $(WARN)
 CPPFLAGS := -Iinclude -Isdk/include -Itests
-CORE := src/syscall.c src/page.c src/memory.c src/compat.c src/string.c
+CORE := src/syscall.c src/page.c src/memory.c src/compat.c src/string.c src/revoke.c
 OBJECTS := $(CORE:%.c=build/%.o)
 HEADERS := $(wildcard include/aelthuvor/*.h sdk/include/abi/*.h) tests/memory_checks.h
-VARIANTS := first best fault readonly exit-live runtime-abi
-.PHONY: all clean test check-sdk integration
+VARIANTS := first best fault readonly exit-live runtime-abi preempt-first preempt-best
+.PHONY: all clean test check-sdk integration profiles abi11
 all: check-sdk build/aelthuvor.elf
 check-sdk:
 	$(PYTHON) tests/check_sdk.py $(if $(SDK_SOURCE),--source "$(SDK_SOURCE)")
@@ -38,6 +38,8 @@ build/%/runtime.o: src/runtime.c $(HEADERS) Makefile
 build/%/demo.o: examples/memory_demo.c $(HEADERS) Makefile
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VARIANT_FLAGS) -c $< -o $@
+build/preempt-first/runtime.o build/preempt-first/demo.o: VARIANT_FLAGS = -DAEL_PREEMPTIVE_BUILD
+build/preempt-best/runtime.o build/preempt-best/demo.o: VARIANT_FLAGS = -DAEL_PREEMPTIVE_BUILD -DAEL_BEST_FIT_BUILD
 build/best/runtime.o: VARIANT_FLAGS = -DAEL_BEST_FIT_BUILD
 build/fault/demo.o: VARIANT_FLAGS = -DAEL_FAULT_BUILD
 build/readonly/demo.o: VARIANT_FLAGS = -DAEL_READONLY_BUILD
@@ -47,14 +49,23 @@ build/%.elf: build/%/runtime.o build/%/demo.o build/startup.o build/tests/memory
 	$(LD) -m elf_i386 -nostdlib --build-id=none -T linker.ld -Map=$(@:.elf=.map) $(filter %.o %.a,$^) -o $@
 build/aelthuvor.elf: build/first.elf
 	cp $< $@
-build/memory-tests: tests/memory_tests.c tests/memory_checks.c src/memory.c src/page.c src/compat.c $(HEADERS) Makefile
+build/memory-tests: tests/memory_tests.c tests/memory_checks.c src/memory.c src/page.c src/compat.c src/revoke.c $(HEADERS) Makefile
 	mkdir -p build
 	$(HOST_CC) -std=c11 -g -O1 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer \
 		$(CPPFLAGS) $(filter %.c,$^) -o $@
-test: all build/memory-tests
+build/revoke-tests: tests/revoke_tests.c src/memory.c src/page.c src/compat.c src/revoke.c $(HEADERS) Makefile
+	mkdir -p build
+	$(HOST_CC) -std=c11 -g -O1 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer \
+		$(CPPFLAGS) $(filter %.c,$^) -o $@
+profiles: all build/best.elf build/preempt-first.elf build/preempt-best.elf
+abi11:
+	$(PYTHON) tests/legacy_build.py
+
+test: profiles build/memory-tests build/revoke-tests
 	$(PYTHON) tests/sdk_tests.py
 	./build/memory-tests
-integration: all $(addprefix build/,$(addsuffix .elf,$(VARIANTS)))
+	./build/revoke-tests
+integration: abi11 all $(addprefix build/,$(addsuffix .elf,$(VARIANTS)))
 	$(PYTHON) tests/integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"
 clean:
 	rm -rf build

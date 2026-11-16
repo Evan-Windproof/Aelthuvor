@@ -50,3 +50,11 @@ free(NULL) 成功；未知地址、页内非块起点、当前已空闲块均 EI
 ENOMEM 代表物理资源/页表不足；ENOSPC 代表额度、资源槽或窗口耗尽；失败不增加访问权限。
 release 失败保留对应记录，trim 允许已完成的部分进度并可重试。只有新建 pool/heap 才能调用 init，
 不能重新初始化一个持有资源或活跃分配的对象。本 API 非线程安全。
+
+## Phase 2 生命周期扩展
+
+First-fit/best-fit 与块表算法不变。公共分配入口在修改表前调用同步检查点，
+Preemptive 模式检测撤销和失效句柄；Cooperative 不调用事件 syscall。
+页面新增 FREE/OWNED/MAPPED/PENDING/ACKED/LOST/RELEASED 状态，不能只凭 owned 位推断仍有权限。
+空 Arena 的 ACK/已丢失页面会清除旧 Arena；活跃失效保留诊断元数据并使 heap 失败停止。
+状态与指针的详细安全边界见 [Phase 2 内存安全](phase2-memory-safety.md)。

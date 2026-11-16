@@ -11,6 +11,16 @@ __asm__(".text\n.global ael_demo_fault\nael_demo_fault:\nmovb $0,0x08000000\nret
 __asm__(".text\n.global ael_demo_fault\nael_demo_fault:\nmovl 0x08800000,%eax\nret\n");
 #endif
 #endif
+#ifdef AEL_PREEMPTIVE_BUILD
+__attribute__((noinline)) void ael_preempt_work(void)
+{
+    __asm__ volatile (".global ael_cpu_begin\nael_cpu_begin:" : : : "memory");
+    for (volatile uint32_t i = 0; i < 12000000u; ++i) {
+        __asm__ volatile ("" : : : "memory");
+    }
+    __asm__ volatile (".global ael_cpu_end\nael_cpu_end:" : : : "memory");
+}
+#endif
 int ael_main(struct ael_heap *heap)
 {
     int result = ael_memory_checks(heap);
@@ -26,7 +36,16 @@ int ael_main(struct ael_heap *heap)
     }
     ael_checkpoint(2);
     ael_log(heap->policy == AEL_FIRST_FIT ? "Aelthuvor first-fit\n" : "Aelthuvor best-fit\n");
+#ifdef AEL_PREEMPTIVE_BUILD
+    /* Bounded CPU work, no yield and no system calls inside the loop. Volatile
+     * progress provides an exact IRQ/resumption audit target without callbacks. */
+    ael_preempt_work();
+    if (ael_heap_check(heap) != 0) {
+        ael_exit(96);
+    }
+#else
     ael_yield(); /* The independent peer runs under its own CR3. */
+#endif
     for (unsigned i = 0; i < 1024; ++i) {
         if (ael_demo_memory[i] != (0xa3110000u | i)) {
             return 41;

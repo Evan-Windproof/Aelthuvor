@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <aelthuvor/memory.h>
 
+static void safety_check(struct ael_heap *heap)
+{
+    if (ael_heap_check(heap) != 0) {
+        ael_exit(96);
+    }
+}
+
 int ael_heap_init(struct ael_heap *heap, struct ael_page_pool *pool, enum ael_policy policy)
 {
     if (heap == NULL || pool == NULL || pool->quota == 0
@@ -36,6 +43,7 @@ void *ael_alloc(struct ael_heap *heap, size_t bytes)
     if (heap == NULL || heap->pool == NULL) {
         return NULL;
     }
+    safety_check(heap);
     heap->error = 0;
     /* Check before rounding, avoiding size_t overflow even on i686. */
     if (bytes == 0 || bytes > LIBERUMS_PAGE_SIZE) {
@@ -98,6 +106,7 @@ int ael_free(struct ael_heap *heap, void *pointer)
     if (heap == NULL || heap->pool == NULL) {
         return RES_EINVAL;
     }
+    safety_check(heap);
     if (pointer == NULL) {
         return 0;
     }
@@ -138,6 +147,7 @@ int ael_heap_trim(struct ael_heap *heap)
     if (heap == NULL || heap->pool == NULL) {
         return RES_EINVAL;
     }
+    safety_check(heap);
     for (unsigned i = 0; i < AEL_PAGE_SLOTS; ++i) {
         struct ael_arena *arena = &heap->arenas[i];
         if (arena->page != NULL && arena->count == 1 && !arena->blocks[0].used) {
@@ -156,6 +166,7 @@ int ael_heap_destroy(struct ael_heap *heap)
     if (heap == NULL || heap->pool == NULL) {
         return RES_EINVAL;
     }
+    safety_check(heap);
     if (heap->live != 0) {
         return RES_EBUSY;
     }

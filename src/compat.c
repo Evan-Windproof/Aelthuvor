@@ -20,5 +20,7 @@ int ael_runtime_probe(struct ael_runtime *runtime, uint32_t major, uint32_t mino
     runtime->quota = (uint32_t)quota;
     runtime->bindings = bindings;
     /* Never exceed either our metadata/window capacity or the kernel quota. */
-    return ael_pages_init(&runtime->pages, (unsigned)quota < AEL_PAGE_SLOTS ? (unsigned)quota : AEL_PAGE_SLOTS);
+    int error = ael_pages_init(&runtime->pages, (unsigned)quota < AEL_PAGE_SLOTS ? (unsigned)quota : AEL_PAGE_SLOTS);
+    runtime->pages.revocation = (required & LIBERUMS_FEATURE_REVOCATION) != 0;
+    return error;
 }

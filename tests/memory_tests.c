@@ -9,6 +9,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+_Noreturn void ael_exit(uint32_t status) { exit((int)status); }
+
 static unsigned assertions;
 #define CHECK(condition) do { ++assertions; if (!(condition)) { \
     fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #condition); exit(1); } } while (0)
@@ -88,7 +90,7 @@ static void failures(void)
     CHECK(ael_runtime_probe(&runtime, 1, 1, AEL_REQUIRED_FEATURES) == 0);
     CHECK(runtime.quota == 4 && runtime.bindings == 4 && runtime.pages.owned == 0);
     CHECK(ael_runtime_probe(&runtime, 2, 0, AEL_REQUIRED_FEATURES) == RES_EPROTONOSUPPORT);
-    CHECK(ael_runtime_probe(&runtime, 1, 2, AEL_REQUIRED_FEATURES) == RES_EPROTONOSUPPORT);
+    CHECK(ael_runtime_probe(&runtime, 1, 3, AEL_REQUIRED_FEATURES) == RES_EPROTONOSUPPORT);
     CHECK(ael_runtime_probe(&runtime, 1, 0, 15) == 0); /* ABI 1.0 remains compatible. */
     mock_features &= ~LIBERUMS_FEATURE_PAGES;
     CHECK(ael_runtime_probe(&runtime, 1, 1, AEL_REQUIRED_FEATURES) == RES_EPROTONOSUPPORT);

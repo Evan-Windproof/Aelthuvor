@@ -11,7 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def check(source=None):
+def check(source=None, working=True):
     manifest = json.loads((ROOT / 'sdk/manifest.json').read_text())
     if not re.fullmatch('[0-9a-f]{40}', manifest['commit']):
         raise ValueError('SDK source must be an exact commit')
@@ -25,7 +25,7 @@ def check(source=None):
         if source is not None:
             pinned = subprocess.check_output(['git', '-C', str(source), 'show',
                        manifest['commit'] + ':include/abi/' + name])
-            if pinned != data or (source / 'include/abi' / name).read_bytes() != data:
+            if pinned != data or (working and (source / 'include/abi' / name).read_bytes() != data):
                 raise ValueError('SDK differs from pinned or working source: ' + name)
     header = (directory / 'syscall.h').read_text()
     for field in ('major', 'minor'):
@@ -36,9 +36,10 @@ def check(source=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path)
+    parser.add_argument('--pinned-only', action='store_true', help='compare Git provenance only, not current worktree headers')
     args = parser.parse_args()
     try:
-        check(args.source)
+        check(args.source, working=not args.pinned_only)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         print('FAIL:', error, file=sys.stderr)
         sys.exit(1)

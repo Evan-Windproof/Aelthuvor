@@ -1,13 +1,14 @@
 {
   "repository": "https://github.com/Evan-Windproof/Liberums",
-  "commit": "49d5dbf2e78f7ad7ed6ec4acdeece68b1b6568d0",
+  "commit": "85a493466afe2038ca22a9870f6f9ce37dd7f3a8",
   "abi": {
     "major": 1,
-    "minor": 1
+    "minor": 2
   },
   "sha256": {
     "elf.h": "2fcfab45adc03ee39169f36b7d43068ad5dd2c008b2b686f94ae137f8e659e5c",
     "resource.h": "9641ad44d3b036019c80ca7d75e85eb6a4347184b139f345279fa60c3772a298",
-    "syscall.h": "cd8763a11e815807de7eb4f4b0e2289ddb2271d41f09718973c4210f18c4ad93"
+    "syscall.h": "d7da6bab9cc84a34e0b23cfc644dc19334cce868b2b189ffd8baa0b195232a46",
+    "event.h": "210586e4b1e86123b2f14a1d15f2f71918da7993a54ae93cde792063f96d1826"
   }
 }

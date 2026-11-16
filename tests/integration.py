@@ -15,14 +15,13 @@ args=parser.parse_args()
 try:
     kernel=args.liberums.resolve()
     check()
-    # Verify current public headers too. Pinned Git provenance is checked by
-    # make check-sdk SDK_SOURCE=... when updating the SDK, independently of build.
-    for file in (ROOT/'sdk/include/abi').iterdir():
-        if file.read_bytes() != (kernel/'include/abi'/file.name).read_bytes():
-            raise ValueError('public ABI drift: '+file.name)
+    # Provenance is exact; runtime compatibility is independently checked by the
+    # loader, runtime and GDB auditor, not by comparing the kernel worktree SDK.
+    check(kernel, working=False)
     subprocess.run(['make','-C',str(kernel),'-j2'],check=True)
-    subprocess.run([sys.executable,str(kernel/'tests/phase5.py'),'--aelthuvor',str(ROOT/'build'),
-                    '--qemu',args.qemu,'--gdb',args.gdb],check=True)
-except (OSError,ValueError,subprocess.SubprocessError) as error:
+    sys.path.append(str(kernel/'tests'))
+    from guest_audit import suite
+    suite(ROOT/'build',args.qemu,args.gdb)
+except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as error:
     print('FAIL:',error,file=sys.stderr)
     sys.exit(1)

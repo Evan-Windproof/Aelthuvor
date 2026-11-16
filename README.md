@@ -1,76 +1,67 @@
 # Aelthuvor — a user-mode LibOS for Liberums
 
-Phase 1：独立的 **C11/i686 Library OS**，以静态 ELF32 运行于 Liberums 的真实 Ring 3。
-内核负责资源所有权、Secure Bindings、页表与隔离；Aelthuvor 自己选择虚拟地址、管理块和空闲空间。
-本阶段使用 GPL-3.0-or-later，见 [LICENSE](LICENSE)。
+独立的 C11/i686 Library OS，以静态 ELF32 运行于 Liberums Ring 3。GPL-3.0-or-later。
+Phase 1 提供用户态页面与块分配；Phase 2 增加 ABI 1.2、抢占 Profile 与 Visible Revocation 客户端。
+Aelthuvor 决定分配策略，Liberums 决定资源保护与 CPU 仲裁。两仓库独立构建，不链接内核私有对象。
 
-```text
-应用 ael_main -> Aelthuvor runtime / first-fit 或 best-fit / 页面封装
-                             | Ring 3
-                 公开 ABI 1.1 / int 0x80
-                             | Ring 0
-Liberums -> 所有者/代数/权限检查 -> PTE -> MMU 执行普通 load/store
-```
+## 独立构建
 
-源码、对象和库不复制进内核。仅 `sdk/include/abi/` 是受控 vendoring 的公开接口，
-固定来源完整提交及 SHA256 见 [sdk/manifest.json](sdk/manifest.json)。
-构建不需要 Liberums checkout；只有集成测试需要两个仓库。
-
-## 工具与独立构建
-
-实际验证版本：Debian 13/x86_64，GCC 14.2.0、Binutils 2.44、GNU Make 4.4.1、Python 3，
-QEMU 10.0.13/TCG/qemu32、GDB 16.3（支持 i386 和 Python）。
-宿主测试需要 Linux 的 memfd/mmap 和 GCC ASan/UBSan。
-
-Debian/Ubuntu 可安装 `build-essential binutils python3 qemu-system-x86 gdb`。
-freestanding `-m32` 编译，不需要 32 位宿主 libc；也可传 `CROSS_COMPILE=i686-elf-`。
-本次云环境已有仓库外工具：`export PATH=/workspace/.liberums-tools/bin:$PATH`。
+需要 GCC、Binutils、GNU Make、Python 3（历史源码重建使用支持 tarfile data filter 的 Python）。
+Linux 宿主测试使用 memfd/mmap、ASan/UBSan。freestanding `-m32` 不需要 32 位宿主 libc。
+可传 `CROSS_COMPILE=i686-elf-`；宿主测试仍使用 `HOST_CC`。
 
 ```sh
 make clean
-make                  # build/libaelthuvor.a + build/aelthuvor.elf（默认 first-fit）
-make test             # 宿主 ASan/UBSan + SDK 漂移拒绝
+make -j2                # 默认仍是 cooperative first-fit，build/aelthuvor.elf
+make test               # 四种构建 + SDK 负测试 + 两个 sanitizer 测试程序
+make profiles           # first / best / preempt-first / preempt-best ELF
+make abi11              # 从固定 Phase 1 Git 提交和原 SDK 重建历史 ELF
 ```
 
-示例静态链接自己的入口/runtime、`examples/memory_demo.c`、共用行为检查与 `libaelthuvor.a`。
-应用可实现 `int ael_main(struct ael_heap *heap)`，用自己的应用对象替换 demo 和测试对象：
+| ELF（build/） | 执行方式 | Required features |
+| --- | --- | --- |
+| first.elf / aelthuvor.elf | cooperative first-fit | 0x1d |
+| best.elf | cooperative best-fit | 0x1d |
+| preempt-first.elf | preemptive first-fit | 0x75 |
+| preempt-best.elf | preemptive best-fit | 0x75 |
+
+以上新 ELF 均要求 ABI 1.2。原 Phase 1 的 ABI 1.1 映像由 `make abi11` 独立验证，
+不是通过修改新 ELF 的 note 冒充旧二进制。输出 provenance 包含来源及本轮 ELF SHA256。
+
+## 独立内核集成
+
+仅 `sdk/include/abi/` 是受控 vendoring；来源完整提交和 SHA256 见 `sdk/manifest.json`。
+构建不需要 Liberums；集成需要兼容的独立 checkout、QEMU 和支持 i386/Python 的 GDB。
 
 ```sh
-# 应用使用与 Makefile 相同的 freestanding flags 编译后：
-ld -m elf_i386 -nostdlib --build-id=none -T linker.ld \
-  build/startup.o build/first/runtime.o my_application.o build/libaelthuvor.a -o application.elf
+make check-sdk SDK_SOURCE=../Liberums  # 更新 SDK 时核对固定来源和工作目录
+python3 tests/check_sdk.py --source ../Liberums --pinned-only # 仅固定 Git 来源
+make integration LIBERUMS=../Liberums # 13 guests / 26 轮生命周期
+make -C ../Liberums run QEMU_APPEND='external preempt' \
+  QEMU_INITRD="$(pwd)/build/preempt-first.elf"
 ```
 
-## 与独立内核集成
+集成脚本在 Aelthuvor 维护，只读取内核公开 SDK 的固定 Git 对象，运行时另做版本/特性检查。
+内核 checkout 的源码不被修改；构建会生成其忽略的 build/。没有 shell；前台 QEMU 按 Ctrl+C 退出。
+工具安装和本轮环境的可复现说明见 [验收记录](docs/phase2-validation.md)。
 
-使用支持此 SDK 的 Liberums 提交，见 manifest；通常克隆到同级 `../Liberums`。
-路径可以覆盖，不依赖开发者机器的绝对位置：
+## API 与安全边界
 
-```sh
-make check-sdk SDK_SOURCE=../Liberums   # 核对固定提交、工作目录头文件与 SHA256
-make integration LIBERUMS=../Liberums # 构建两端，9 个 QEMU/GDB 场景、18 轮生命周期
-make -C ../Liberums run QEMU_APPEND=external \
-  QEMU_INITRD="$(pwd)/build/aelthuvor.elf"
-# 或从 Liberums：make test-libos AELTHUVOR=../Aelthuvor
-```
+- `ael_alloc`：16 字节对齐，每次 1..4096 字节，first-fit/best-fit 均保留分裂与合并。
+- `ael_free`：仅接受精确活跃块起点；NULL 无操作；非法/重复释放 EINVAL。
+- `ael_heap_trim/destroy`：归还空页；destroy 在有活跃块时 EBUSY。
+- Preemptive 下公共分配器入口先检查撤销和句柄。空 Arena 可 ACK；活跃页撤销或协议错误导致
+  受控 `exit(96)`。显式 `ael_heap_check` 返回 sticky 错误，调用方必须停止执行，不得忽略。
+- 强制撤销可能在任意两条用户指令间发生，事件完成后消失。查询不能消除 TOCTOU，
+  不保证透明恢复活跃指针；检查前访问可能由 MMU 终止本域。见 [内存安全](docs/phase2-memory-safety.md)。
 
-只有 `external` 参数才启动外部映像。没有 shell，最终内核停止；前台运行按 Ctrl+C 退出 QEMU。
-QEMU 的 initrd 是独立 ELF 的 Multiboot 模块；LibOS 不链接任何内核对象。
-`make integration` 还生成 best-fit、跨域故障、代码写故障、带资源退出及运行时 ABI 拒绝的测试 ELF。
+真实 QEMU/GDB 已验证双 Profile、两种策略、IRQ/Peer/寄存器恢复、ABI 1.1 历史映像、隔离和清零回收。
+撤销客户端已通过宿主模拟；真正的外部 Aelthuvor 撤销端到端场景尚无内核触发入口，未验证。
 
-## API 与限制
+不提供 POSIX、文件系统、网络、线程、SMP、动态链接、透明指针迁移或通用用户异常恢复。
+普通 i686 无 NX，不承诺完整 W^X。原始指针复用后不能区分旧/新对象。
 
-- `ael_alloc(heap, bytes)`：16 字节对齐、每次 1..4096 字节；返回 NULL 时见 `heap->error`。
-- `ael_free(heap, pointer)`：只接受精确活跃块起点，NULL 无操作；非法/重复释放返回 EINVAL。
-- `ael_heap_trim/destroy`：trim 归还全空页；destroy 有活跃块时 EBUSY，失败保留可重试元数据。
-- 页面接口提供 claim/map/unmap/release；失败回滚，句柄保持完整 index/generation。
-
-当前内核每域最多四个动态页，窗口 16 页。额度由 ABI 查询，物理不足仍可能提前失败。
-只支持单 CPU、合作式执行；没有 POSIX、线程安全、文件系统、网络、动态链接或通用 libc。
-原始指针在地址复用后没有代数，不能检测所有 use-after-free；用户越界仍可破坏同域数据，
-不能据此赋予更多内核权限。普通 i686 无 NX，不提供完整 W^X。
-Visible Revocation 和 CPU 抢占留待以后，本次停止于 Phase 1。
-
-阅读：[架构](docs/architecture.md) → [ABI](docs/abi-compatibility.md) →
-[内存管理](docs/memory-management.md) → [实际验收](docs/phase1-validation.md)。
-生成 ELF、对象、日志均在被忽略的 `build/`；不提交工具链或临时输出。
+阅读：[Phase 2 总览](docs/phase2-overview.md) → [架构](docs/architecture.md) →
+[ABI](docs/phase2-abi.md) → [抢占](docs/phase2-preemption.md) →
+[撤销](docs/phase2-revocation.md) → [模块](docs/phase2-modules.md) →
+[实际验收](docs/phase2-validation.md)。[Phase 1 验收](docs/phase1-validation.md)保留为历史记录。
