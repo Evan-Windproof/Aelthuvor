@@ -12,9 +12,10 @@ QEMU ?= qemu-system-i386
 GDB ?= gdb
 ARCH := -m32 -march=i686 -mno-mmx -mno-sse -mno-sse2 -msoft-float
 WARN := -Wall -Wextra -Werror -Wpedantic
+PREFIX_MAP := -ffile-prefix-map=$(CURDIR)=. -fdebug-prefix-map=$(CURDIR)=.
 CFLAGS := $(ARCH) -std=c11 -ffreestanding -fno-builtin -fno-pic -fno-pie \
           -fno-stack-protector -fno-common -fno-asynchronous-unwind-tables \
-          -fno-unwind-tables -fno-omit-frame-pointer -g3 -O2 $(WARN)
+          -fno-unwind-tables -fno-omit-frame-pointer -g3 -O2 $(WARN) $(PREFIX_MAP)
 CPPFLAGS := -Iinclude -Isdk/include -Itests
 CORE := src/syscall.c src/page.c src/memory.c src/compat.c src/string.c src/revoke.c src/app.c
 OBJECTS := $(CORE:%.c=build/%.o)
@@ -29,7 +30,7 @@ build/%.o: %.c $(HEADERS) Makefile
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 build/startup.o: arch/x86/startup.S Makefile
 	mkdir -p build
-	$(CC) $(ARCH) -g3 -c $< -o $@
+	$(CC) $(ARCH) $(PREFIX_MAP) -g3 -c $< -o $@
 build/libaelthuvor.a: $(OBJECTS)
 	$(AR) rcs $@ $^
 build/%/runtime.o: src/runtime.c $(HEADERS) Makefile
@@ -119,7 +120,7 @@ build/api-coop-best/runtime.o: VARIANT_FLAGS = -DAEL_BEST_FIT_BUILD
 build/libaeldevices.a: $(DEVICE_OBJECTS) build/src/app_console.o
 	$(AR) rcs $@ $^
 build/src/app.o build/src/app_entry.o build/src/app_console.o: src/app_internal.h
-build/app-sdk/.stamp: build/libaelthuvor.a build/libaeldevices.a build/startup.o build/src/app_entry.o $(APP_RUNTIMES) $(HEADERS) linker.ld mk/app.mk sdk/manifest.json scripts/export_sdk.py
+build/app-sdk/.stamp: build/libaelthuvor.a build/libaeldevices.a build/startup.o build/src/app_entry.o $(APP_RUNTIMES) $(HEADERS) linker.ld mk/app.mk sdk/manifest.json sdk/README.md VERSION scripts/export_sdk.py
 	$(PYTHON) scripts/export_sdk.py
 .PHONY: app-sdk apps app-hello app-memory app-console app-template
 app-sdk: check-sdk build/app-sdk/.stamp
@@ -161,3 +162,15 @@ phase5-fixtures: app-sdk independent-libos
 	$(MAKE) -f mk/reliability.mk AEL_SDK="$(abspath build/app-sdk)" OUT="$(abspath build/phase9/ael-best)" APP_PROFILE=preempt APP_POLICY=best
 phase5-integration: phase5-fixtures
 	$(PYTHON) tests/phase5_integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"
+
+.PHONY: sdk-package release-package package-tests release-tests phase6-integration
+sdk-package: app-sdk
+	$(PYTHON) scripts/package_release.py
+release-package: app-sdk
+	$(PYTHON) scripts/package_release.py --release
+package-tests: sdk-package
+	$(PYTHON) tests/package_tests.py
+release-tests: release-package
+	$(PYTHON) tests/release_repro.py
+phase6-integration: sdk-package independent-libos
+	$(PYTHON) tests/phase6_integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"

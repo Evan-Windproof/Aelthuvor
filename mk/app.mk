@@ -12,7 +12,8 @@ APP_DEVICES ?= 0
 APP_FLAGS := -m32 -march=i686 -mno-mmx -mno-sse -mno-sse2 -msoft-float \
   -std=c11 -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector \
   -fno-common -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-omit-frame-pointer \
-  -g3 -O2 -Wall -Wextra -Werror -Wpedantic
+  -g3 -O2 -Wall -Wextra -Werror -Wpedantic \
+  -ffile-prefix-map=$(CURDIR)=. -fdebug-prefix-map=$(CURDIR)=.
 RUNTIME := $(AEL_SDK)/lib/runtime-$(APP_PROFILE)-$(APP_POLICY).o
 LIBS := $(if $(filter 1,$(APP_DEVICES)),$(AEL_SDK)/lib/libaeldevices.a) $(AEL_SDK)/lib/libaelthuvor.a
 .PHONY: all clean app-config-check
