@@ -72,6 +72,7 @@ int ael_page_map(struct ael_page_pool *pool, struct ael_page *page)
         }
         page->address = address;
         page->mapped = 1;
+        page->cleanup_pending = 0; /* Explicit low-level recovery takes ownership. */
         page->state = AEL_PAGE_MAPPED;
         return 0;
     }
@@ -117,6 +118,7 @@ int ael_page_acquire(struct ael_page_pool *pool, struct ael_page **out)
         if (error != 0) {
             int cleanup = ael_page_release(pool, *out);
             if (cleanup != 0) {
+                (*out)->cleanup_pending = 1;
                 return cleanup; /* The live record remains in the pool. */
             }
             *out = NULL;
@@ -131,6 +133,7 @@ void ael_page_retire(struct ael_page_pool *pool, struct ael_page *page, enum ael
         --pool->owned;
     }
     page->owned = page->mapped = 0;
+    page->cleanup_pending = 0;
     page->address = 0;
     page->state = state;
 }

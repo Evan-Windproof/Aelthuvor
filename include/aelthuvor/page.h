@@ -11,6 +11,7 @@ struct ael_page {
     struct resource_handle handle;
     uintptr_t address;
     unsigned owned, mapped;
+    unsigned cleanup_pending; /* Failed acquire rollback; Trim must retry release. */
     enum ael_page_state state;
     uint32_t request;
 };

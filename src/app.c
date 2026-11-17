@@ -93,9 +93,8 @@ int ael_app_finish(struct ael_app_context *context)
     if (error) { return error; }
     if (context->close_service) { error = context->close_service(context); }
     int heap_error = ael_heap_destroy(&context->runtime->heap);
-    /* A failed map + failed rollback can leave a claimed page without an
-     * arena. The original pool deliberately retains that identity. Do not
-     * report successful application cleanup while it is still owned. */
+    /* Trim retries failed-acquire rollback records. A separate low-level page
+     * owner still requires explicit cleanup; never report success over it. */
     if (!heap_error && context->runtime->pages.owned) { heap_error = RES_EBUSY; }
     if (!error) { error = heap_error; }
     /* A terminal context never hands control back to the application. Live

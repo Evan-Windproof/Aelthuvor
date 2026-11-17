@@ -148,6 +148,17 @@ int ael_heap_trim(struct ael_heap *heap)
         return RES_EINVAL;
     }
     safety_check(heap);
+    /* An acquire can fail before an arena exists. Retry only its explicitly
+     * marked rollback records, never unrelated low-level page owners. */
+    for (unsigned i = 0; i < AEL_PAGE_SLOTS; ++i) {
+        struct ael_page *page = &heap->pool->pages[i];
+        if (page->owned && page->cleanup_pending) {
+            int error = ael_page_release(heap->pool, page);
+            if (error != 0) {
+                return error;
+            }
+        }
+    }
     for (unsigned i = 0; i < AEL_PAGE_SLOTS; ++i) {
         struct ael_arena *arena = &heap->arenas[i];
         if (arena->page != NULL && arena->count == 1 && !arena->blocks[0].used) {

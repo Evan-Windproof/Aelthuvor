@@ -6,6 +6,7 @@ Aelthuvor 不是内核的必需运行时，也不是唯一获支持的 LibOS。
 
 Phase 1～3 保留可变块分配、ABI 1.2、抢占/撤销客户端和设备 Console。
 Phase 4 新增 **Application SDK 1.0** 和 **不依赖 Aelthuvor 的独立 LibOS 参考**。
+Phase 5 完成失败回滚资源的 Trim/Finish 重试，以及 Liberums v1.0.0 上的真实 RAM 撤销生命周期验收。
 两条路线分别说明，不能把 ael_* 当成内核官方 ABI。
 
 ## 使用 Aelthuvor 开发应用
@@ -60,6 +61,7 @@ make test                 # 原有断言 + SDK/设备/Application/参考池宿�
 make integration LIBERUMS=../Liberums
 make console-integration LIBERUMS=../Liberums
 make phase4-integration LIBERUMS=../Liberums
+make phase5-integration LIBERUMS=../Liberums  # 固定 v1.0.0 checkout，QEMU/GDB
 ```
 
 原 `ael_main(heap)` 不删除，与新入口通过显式对象分别选择。两个静态库都不含具体应用 main。
@@ -76,7 +78,8 @@ SDK 核心仍固定 Phase 6、设备扩展仍固定 Phase 7.3；六个头的来�
 
 First-fit/best-fit、16 字节对齐、块分裂/合并、回滚、trim/destroy 继续保留。
 严重 Heap 失效采取 exit(96)，不返回已知失效指针；设备错误停止服务并清理其余设备。
-查询无法消除强制撤销后的访问竞态，不保证透明恢复任意活跃页；外部活跃 RAM 撤销 E2E 仍是未补齐项目。
+查询无法消除强制撤销后的访问竞态，不保证透明恢复任意活跃页。
+Phase 5 已验证外部 RAM 的主动 ACK、真实 PIT 强制回收、exit(96)、预期 #PF 和多域隔离。
 
 没有 POSIX、文件系统、网络、动态链接、SMP、线程、fork、通用 spawn/IPC、设备复用或 GUI。
 普通 i686 无 NX，不承诺完整 W^X。旧裸指针在地址复用后不能区分新旧对象。
@@ -87,3 +90,8 @@ First-fit/best-fit、16 字节对齐、块分裂/合并、回滚、trim/destroy 
 [兼容矩阵](docs/libos-compatibility-matrix.md) → [移植观察](docs/libos-porting-observations.md) →
 [验收](docs/phase4-validation.md) / [边界](docs/phase4-boundary-review.md)。
 Phase 1～3 的实现与验收文档保留为历史记录。
+
+当前可靠性说明：[Phase 5 总览](docs/phase5-overview.md) →
+[资源生命周期](docs/phase5-resource-lifecycle.md) → [撤销](docs/phase5-revocation.md) →
+[失败语义](docs/phase5-failure-handling.md) → [验证](docs/phase5-validation.md) →
+[边界审查](docs/phase5-boundary-review.md)。Phase 1～4 验收文档保留各阶段的历史结论。

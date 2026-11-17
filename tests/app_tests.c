@@ -117,7 +117,16 @@ static void core(enum ael_policy policy)
     setup(policy);map_error=RES_ENOMEM;release_error=RES_EAGAIN;
     CHECK(ael_app_alloc(&context,16)==NULL && ael_app_error(&context)==RES_EAGAIN);
     CHECK(runtime.heap.live==0 && runtime.pages.owned==1);
-    CHECK(ael_app_finish(&context)==RES_EBUSY && runtime.pages.owned==1);
+    CHECK(ael_app_finish(&context)==RES_EAGAIN && runtime.pages.owned==1 && !context.active);
+    setup(policy);map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+    CHECK(ael_app_alloc(&context,16)==NULL && runtime.pages.owned==1);
+    map_error=release_error=0;
+    CHECK(ael_app_trim(&context)==0 && runtime.pages.owned==0);
+    CHECK(ael_app_finish(&context)==0);
+    setup(policy);map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+    CHECK(ael_app_alloc(&context,16)==NULL && runtime.pages.owned==1);
+    map_error=release_error=0;
+    CHECK(ael_app_finish(&context)==0 && runtime.pages.owned==0);
     setup(policy);runtime.heap.failure=RES_ESTALE;exit_expected=1;
     if (setjmp(exit_target)==0) { (void)ael_app_alloc(&context,16);CHECK(0); }
     CHECK(exit_status==96 && context.error==RES_ESTALE);
@@ -160,10 +169,50 @@ static void devices(void)
     CHECK(ael_app_write(&context,"after loss")==RES_ESTALE && calls==previous+1 && ael_app_error(&context)==RES_ESTALE);
     CHECK(ael_app_finish(&context)==RES_ESTALE && !vowned && !kowned && !context.service);
 }
+
+static void lifetimes(enum ael_policy policy)
+{
+    uint32_t seed=0x5a17c0de;
+    for (unsigned cycle=0;cycle<128;++cycle) {
+        setup(policy);
+        seed=seed*1664525u+1013904223u;
+        if (cycle%3==0) {
+            map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+            CHECK(ael_app_alloc(&context,16)==NULL && ael_app_error(&context)==RES_EAGAIN);
+            CHECK(runtime.pages.owned==1 && runtime.heap.live==0);
+            map_error=release_error=0;
+        }
+        unsigned char *p=ael_app_alloc(&context,1+seed%4096);CHECK(p);
+        p[0]=(unsigned char)cycle;
+        struct ael_app_info info;
+        CHECK(ael_app_get_info(&context,&info)==0 && info.live_allocations==1);
+        CHECK(p[0]==(unsigned char)cycle && ael_app_free(&context,p)==0);
+        CHECK(ael_app_free(&context,p)==RES_EINVAL);
+        CHECK(ael_app_finish(&context)==0 && runtime.pages.owned==0 && runtime.heap.live==0);
+        unsigned before=calls;
+        CHECK(ael_app_alloc(&context,16)==NULL);
+        CHECK(ael_app_free(&context,NULL)==RES_EINVAL && ael_app_trim(&context)==RES_EINVAL);
+        CHECK(ael_app_check(&context)==RES_EINVAL && ael_app_get_info(&context,&info)==RES_EINVAL);
+        CHECK(ael_app_finish(&context)==RES_EINVAL && calls==before);
+        for (unsigned j=0;j<4;++j) { CHECK(!pages[j].owned && !pages[j].va); }
+    }
+    setup(policy);CHECK(ael_app_alloc(&context,64));
+    runtime.heap.failure=RES_ESTALE;exit_expected=1;
+    if (setjmp(exit_target)==0) { (void)ael_app_check(&context);CHECK(0); }
+    if (setjmp(exit_target)==0) { (void)ael_app_free(&context,NULL);CHECK(0); }
+    if (setjmp(exit_target)==0) { (void)ael_app_trim(&context);CHECK(0); }
+    if (setjmp(exit_target)==0) { struct ael_app_info info;(void)ael_app_get_info(&context,&info);CHECK(0); }
+    if (setjmp(exit_target)==0) { (void)ael_app_finish(&context);CHECK(0); }
+    if (setjmp(exit_target)==0) { ael_app_exit(&context,0); }
+    CHECK(exit_status==96 && runtime.heap.live==1 && context.error==RES_ESTALE);
+}
 int main(void)
 {
     CHECK(ael_app_bind(NULL,NULL)==RES_EINVAL && ael_app_error(NULL)==RES_EINVAL);
     core(AEL_FIRST_FIT);core(AEL_BEST_FIT);devices();
+    lifetimes(AEL_FIRST_FIT);lifetimes(AEL_BEST_FIT);
+    setup(AEL_FIRST_FIT); /* Host-only teardown of the last fail-stop fixture. */
+    puts("PASS: 256 seeded Application Context lifetimes and closed/unsafe API gates");
     printf("PASS: %u Application SDK assertions (ASan/UBSan)\n",checks);
     return 0;
 }

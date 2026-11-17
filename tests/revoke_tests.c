@@ -262,6 +262,29 @@ static void scenarios(enum ael_policy policy)
     CHECK(ael_alloc(&heap,32) == NULL && heap.error == RES_EAGAIN && pool.owned == 1);
     map_error = release_error = 0;
     CHECK(ael_page_release(&pool,&pool.pages[0]) == 0);
+
+    reset(policy);
+    map_error = RES_ENOMEM; release_error = RES_EAGAIN;
+    CHECK(ael_alloc(&heap,32) == NULL && heap.error == RES_EAGAIN);
+    CHECK(pool.owned == 1 && heap.live == 0 && heap.arenas[0].page == NULL);
+    CHECK(ael_heap_trim(&heap) == RES_EAGAIN && pool.owned == 1);
+    map_error = release_error = 0;
+    CHECK(ael_heap_trim(&heap) == 0 && pool.owned == 0);
+    CHECK(ael_heap_destroy(&heap) == 0);
+
+    reset(policy);
+    map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+    CHECK(ael_alloc(&heap,16)==NULL && pool.pages[0].cleanup_pending);
+    reclaim(pool.pages[0].handle.index-1);
+    CHECK(ael_heap_check(&heap)==0 && pool.owned==0 && !pool.pages[0].cleanup_pending);
+    CHECK(pool.pages[0].state==AEL_PAGE_LOST && release_calls==1);
+
+    reset(policy);
+    map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+    CHECK(ael_alloc(&heap,16)==NULL && pool.pages[0].cleanup_pending);
+    request(0,&pool.pages[0],0x80010001u);
+    CHECK(ael_heap_check(&heap)==0 && pool.owned==0 && !pool.pages[0].cleanup_pending);
+    CHECK(pool.pages[0].state==AEL_PAGE_ACKED && ack_calls==1);
 }
 
 static void sequences(enum ael_policy policy)
@@ -283,12 +306,115 @@ static void sequences(enum ael_policy policy)
     CHECK(ael_heap_destroy(&heap) == 0);
 }
 
+/* Independent accounting oracle: do not infer ownership from heap->live alone. */
+static void invariant(void)
+{
+    unsigned owned=0, live=0, actual=0;
+    for (unsigned i=0;i<4;++i) { actual+=resources[i].owned; }
+    for (unsigned i=0;i<AEL_PAGE_SLOTS;++i) {
+        struct ael_page *p=&pool.pages[i];
+        if (!p->owned) { CHECK(!p->mapped && !p->cleanup_pending);continue; }
+        ++owned;
+        CHECK(p->handle.index>=1 && p->handle.index<=4);
+        CHECK(resources[p->handle.index-1].owned);
+        CHECK(resources[p->handle.index-1].generation==p->handle.generation);
+        CHECK(resources[p->handle.index-1].va==p->address);
+        CHECK(p->mapped==(p->address!=0));
+        CHECK(!p->cleanup_pending || (!p->mapped && p->state==AEL_PAGE_OWNED));
+        for (unsigned j=i+1;j<AEL_PAGE_SLOTS;++j) {
+            CHECK(!pool.pages[j].owned || pool.pages[j].handle.index!=p->handle.index);
+        }
+    }
+    CHECK(owned==actual && owned==pool.owned && owned<=pool.quota);
+    for (unsigned i=0;i<AEL_PAGE_SLOTS;++i) {
+        struct ael_arena *a=&heap.arenas[i];
+        if (!a->page) { CHECK(a->count==0);continue; }
+        CHECK(a->page->owned && a->page->mapped && !a->page->cleanup_pending);
+        CHECK(a->count>=1 && a->count<=AEL_BLOCKS_PER_PAGE);
+        unsigned end=0;
+        for (unsigned j=0;j<a->count;++j) {
+            CHECK(a->blocks[j].offset==end && a->blocks[j].size && !(a->blocks[j].size&15));
+            end+=a->blocks[j].size;live+=a->blocks[j].used;
+            if (j) { CHECK(a->blocks[j].used || a->blocks[j-1].used); }
+        }
+        CHECK(end==4096);
+        for (unsigned j=i+1;j<AEL_PAGE_SLOTS;++j) { CHECK(heap.arenas[j].page!=a->page); }
+    }
+    CHECK(live==heap.live);
+}
+
+static void pressure(enum ael_policy policy)
+{
+    reset(policy);
+    void *pointers[32]={0};unsigned sizes[32]={0};
+    uint32_t seed=0x5a17c0de;
+    unsigned oom=0;
+    for (unsigned step=0;step<5000;++step) {
+        seed=seed*1664525u+1013904223u;
+        unsigned slot=(seed>>16)%32;
+        if (pointers[slot]) {
+            unsigned char *p=pointers[slot];
+            for (unsigned j=0;j<sizes[slot];++j) { CHECK(p[j]==(unsigned char)(slot^j)); }
+            CHECK(ael_free(&heap,p)==0);pointers[slot]=NULL;
+        } else {
+            sizes[slot]=1+((seed>>5)%4096);
+            unsigned char *p=ael_alloc(&heap,sizes[slot]);
+            if (!p) { ++oom;CHECK(heap.error==RES_ENOSPC); }
+            else {
+                pointers[slot]=p;
+                for (unsigned j=0;j<sizes[slot];++j) { p[j]=(unsigned char)(slot^j); }
+            }
+        }
+        if (step%17==0) { CHECK(ael_heap_trim(&heap)==0); }
+        if (step%31==0) {
+            for (unsigned j=0;j<AEL_PAGE_SLOTS;++j) {
+                struct ael_arena *a=&heap.arenas[j];
+                if (a->page && a->count==1 && !a->blocks[0].used) {
+                    request(0,a->page,0x90000000u+step);
+                    CHECK(ael_heap_check(&heap)==0);break;
+                }
+            }
+        }
+        invariant();
+        if (step%97==0) {
+            for (unsigned j=0;j<32;++j) {
+                if (pointers[j]) { CHECK(ael_free(&heap,pointers[j])==0);pointers[j]=NULL; }
+            }
+            CHECK(ael_heap_trim(&heap)==0);
+            map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+            CHECK(ael_alloc(&heap,16)==NULL && heap.error==RES_EAGAIN);
+            invariant();
+            CHECK(ael_heap_trim(&heap)==RES_EAGAIN);invariant();
+            map_error=release_error=0;
+            CHECK(ael_heap_trim(&heap)==0);invariant();
+        }
+    }
+    for (unsigned i=0;i<32;++i) { if (pointers[i]) { CHECK(ael_free(&heap,pointers[i])==0); } }
+    CHECK(ael_heap_destroy(&heap)==0);invariant();
+    /* A standalone low-level owner is not a failed-acquire record. */
+    struct ael_page *p;
+    CHECK(ael_page_claim(&pool,&p)==0 && ael_heap_trim(&heap)==0 && pool.owned==1);
+    CHECK(ael_page_release(&pool,p)==0);
+    map_error=RES_ENOMEM;release_error=RES_EAGAIN;
+    CHECK(ael_page_acquire(&pool,&p)==RES_EAGAIN && p->cleanup_pending);
+    map_error=release_error=0;
+    CHECK(ael_page_map(&pool,p)==0 && !p->cleanup_pending);
+    CHECK(ael_heap_trim(&heap)==0 && pool.owned==1);
+    CHECK(ael_page_release(&pool,p)==0);
+    CHECK(oom>0 && ack_calls>0);
+    printf("PASS: pressure policy=%u seed=0x5a17c0de operations=5000 OOM=%u idle_ACK=%u\n",
+           (unsigned)policy,oom,ack_calls);
+}
+
 int main(void)
 {
     abi();
-    for (unsigned p = 0; p <= 1; ++p) { scenarios((enum ael_policy)p); sequences((enum ael_policy)p); }
+    for (unsigned p = 0; p <= 1; ++p) {
+        scenarios((enum ael_policy)p); sequences((enum ael_policy)p); pressure((enum ael_policy)p);
+    }
     reset(AEL_FIRST_FIT);
     puts("PASS: revocation/profile scenarios and 1000 deterministic lifecycle sequences");
+    puts("PASS: 10000 seeded pressure operations, ownership/arena/data invariants, rollback retries");
     printf("PASS: %u revocation assertions (ASan/UBSan)\n",checks);
     return 0;
 }

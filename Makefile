@@ -154,3 +154,10 @@ phase4-fixtures: app-sdk
 .PHONY: phase4-integration
 phase4-integration: apps independent-libos phase4-fixtures
 	$(PYTHON) tests/phase4_integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"
+
+.PHONY: phase5-fixtures phase5-integration
+phase5-fixtures: app-sdk independent-libos
+	$(MAKE) -f mk/reliability.mk AEL_SDK="$(abspath build/app-sdk)" OUT="$(abspath build/phase9/ael-first)" APP_PROFILE=preempt APP_POLICY=first
+	$(MAKE) -f mk/reliability.mk AEL_SDK="$(abspath build/app-sdk)" OUT="$(abspath build/phase9/ael-best)" APP_PROFILE=preempt APP_POLICY=best
+phase5-integration: phase5-fixtures
+	$(PYTHON) tests/phase5_integration.py --liberums "$(LIBERUMS)" --qemu "$(QEMU)" --gdb "$(GDB)"
