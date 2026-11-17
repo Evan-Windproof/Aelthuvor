@@ -1,92 +1,89 @@
-# Aelthuvor — a user-mode LibOS for Liberums
+# Aelthuvor — an independent Library OS for Liberums
 
-独立的 C11/i686 Library OS，以静态 ELF32 运行于 Liberums Ring 3。GPL-3.0-or-later。
-Phase 1 提供用户态页面与块分配；Phase 2 增加 ABI 1.2、抢占与撤销；Phase 3 增加 VGA/PS2 模块和独立 Console。
-Aelthuvor 决定分配策略，Liberums 决定资源保护与 CPU 仲裁。两仓库独立构建，不链接内核私有对象。
+独立 C11/i686 LibOS，静态 ELF32，运行于真实 Ring 3。GPL-3.0-or-later。
+Liberums 保护物理资源、Capability、PTE 和 CPU；Aelthuvor 选择内存和用户态服务策略。
+Aelthuvor 不是内核的必需运行时，也不是唯一获支持的 LibOS。
 
-## 独立构建
+Phase 1～3 保留可变块分配、ABI 1.2、抢占/撤销客户端和设备 Console。
+Phase 4 新增 **Application SDK 1.0** 和 **不依赖 Aelthuvor 的独立 LibOS 参考**。
+两条路线分别说明，不能把 ael_* 当成内核官方 ABI。
 
-需要 GCC、Binutils、GNU Make、Python 3（历史源码重建使用支持 tarfile data filter 的 Python）。
-Linux 宿主测试使用 memfd/mmap、ASan/UBSan。freestanding `-m32` 不需要 32 位宿主 libc。
-可传 `CROSS_COMPILE=i686-elf-`；宿主测试仍使用 `HOST_CC`。
+## 使用 Aelthuvor 开发应用
+
+```sh
+make app-sdk               # 导出 build/app-sdk
+make apps                  # Hello、Memory 两策略、SDK Console、独立应用模板
+make app-hello
+make app-memory
+make app-console           # 新公共 API Console，build/apps/console/app.elf
+make sdk-tests             # 隔离构建、改源码、切换策略、依赖与入口审计
+```
+
+应用只包含 app.h / 可选 app_console.h，实现 `int ael_app_main(struct ael_app_context *ctx)`。
+接口提供 ABI/API 信息快照、分配/释放、错误、log/yield/exit 和可选设备服务，不暴露 Heap/Handle/Generation。
+源码与外部 Makefile 示例见 [application-template](examples/application-template/README.md)。
+复制导出的 SDK 和模板到仓库外即可编译，无需 src/ 或内核 checkout。
+修改应用只重建对应应用，不重编译 LibOS 或内核。默认 Preemptive，策略与可选设备通过 app.mk 参数选择。
+
+## 直接开发另一种 LibOS
+
+```sh
+make independent-libos    # build/independent-libos/reference.elf
+```
+
+[独立参考](reference/independent-libos/README.md)有自己的 Assembly/C 入口、linker、syscall、固定对象池和应用。
+它只用公开 ABI 头，不包含 aelthuvor 头，不链接 Aelthuvor 的 runtime 或库。
+不同策略不需要继承 Aelthuvor 的结构；这份参考是未来 Liberums Phase 10 教学的实验初稿。
+
+在已构建的 Phase 8 内核上，可在同一次启动中加载两个 ELF：
+
+```sh
+qemu-system-i386 -machine pc -accel tcg -cpu qemu32 -m 32M -smp 1 \
+  -display none -serial stdio -monitor none -nic none -no-reboot -no-shutdown \
+  -kernel ../Liberums/build/liberums.elf -append multi-external \
+  -initrd build/apps/memory/app.elf,build/independent-libos/reference.elf
+```
+
+两个域有独立 CR3、栈和资源，不要求其中一方启动另一方。可信启动最多四域；没有用户 spawn 或通用 IPC。
+
+## 旧入口与独立回归
+
+需要 GCC、Binutils、GNU Make、Python；freestanding -m32 不需要 32 位宿主 libc。
+Linux ASan/UBSan 测试使用 memfd/mmap；历史重建需要支持 tarfile data filter 的 Python。
 
 ```sh
 make clean
-make -j2                # 默认仍是 cooperative first-fit，build/aelthuvor.elf
-make test               # 四种构建 + SDK 负测试 + 两个 sanitizer 测试程序
-make profiles           # first / best / preempt-first / preempt-best ELF
-make abi11              # 从固定 Phase 1 Git 提交和原 SDK 重建历史 ELF
-make console            # build/ael-console.elf，Preemptive first-fit
-make build/console-best.elf # 可选 best-fit Console
-```
-
-| ELF（build/） | 执行方式 | Required features |
-| --- | --- | --- |
-| first.elf / aelthuvor.elf | cooperative first-fit | 0x1d |
-| best.elf | cooperative best-fit | 0x1d |
-| preempt-first.elf | preemptive first-fit | 0x75 |
-| preempt-best.elf | preemptive best-fit | 0x75 |
-
-以上新 ELF 均要求 ABI 1.2。原 Phase 1 的 ABI 1.1 映像由 `make abi11` 独立验证，
-不是通过修改新 ELF 的 note 冒充旧二进制。输出 provenance 包含来源及本轮 ELF SHA256。
-
-## 独立内核集成
-
-仅 `sdk/include/abi/` 是受控 vendoring；来源完整提交和 SHA256 见 `sdk/manifest.json`。
-构建不需要 Liberums；集成需要兼容的独立 checkout、QEMU 和支持 i386/Python 的 GDB。
-
-```sh
-make check-sdk SDK_SOURCE=../Liberums  # 更新 SDK 时核对固定来源和工作目录
-python3 tests/check_sdk.py --source ../Liberums --pinned-only # 仅固定 Git 来源
-make integration LIBERUMS=../Liberums # 13 guests / 26 轮生命周期
-make -C ../Liberums run QEMU_APPEND='external preempt' \
-  QEMU_INITRD="$(pwd)/build/preempt-first.elf"
-```
-
-集成脚本在 Aelthuvor 维护，只读取内核公开 SDK 的固定 Git 对象，运行时另做版本/特性检查。
-内核 checkout 的源码不被修改；构建会生成其忽略的 build/。没有 shell；前台 QEMU 按 Ctrl+C 退出。
-工具安装和本轮环境的可复现说明见 [验收记录](docs/phase2-validation.md)。
-
-## API 与安全边界
-
-- `ael_alloc`：16 字节对齐，每次 1..4096 字节，first-fit/best-fit 均保留分裂与合并。
-- `ael_free`：仅接受精确活跃块起点；NULL 无操作；非法/重复释放 EINVAL。
-- `ael_heap_trim/destroy`：归还空页；destroy 在有活跃块时 EBUSY。
-- Preemptive 下公共分配器入口先检查撤销和句柄。空 Arena 可 ACK；活跃页撤销或协议错误导致
-  受控 `exit(96)`。显式 `ael_heap_check` 返回 sticky 错误，调用方必须停止执行，不得忽略。
-- 强制撤销可能在任意两条用户指令间发生，事件完成后消失。查询不能消除 TOCTOU，
-  不保证透明恢复活跃指针；检查前访问可能由 MMU 终止本域。见 [内存安全](docs/phase2-memory-safety.md)。
-
-真实 QEMU/GDB 已验证双 Profile、两种策略、IRQ/Peer/寄存器恢复、ABI 1.1 历史映像、隔离和清零回收。
-撤销客户端已通过宿主模拟；真正的外部 Aelthuvor 撤销端到端场景尚无内核触发入口，未验证。
-
-Console 支持 help/clear/about/status/memtest/exit、US 键盘编辑、滚动和光标。它静态链接同一域内的 LibOS，
-不提供通用 Shell、多外部 ELF 并发或 IPC，也不提供 POSIX、文件系统、网络、线程、SMP、动态链接或透明指针迁移。
-普通 i686 无 NX，不承诺完整 W^X。原始指针复用后不能区分旧/新对象。
-
-阅读：[Phase 2 总览](docs/phase2-overview.md) → [架构](docs/architecture.md) →
-[ABI](docs/phase2-abi.md) → [抢占](docs/phase2-preemption.md) →
-[撤销](docs/phase2-revocation.md) → [模块](docs/phase2-modules.md) →
-[实际验收](docs/phase2-validation.md)。[Phase 1 验收](docs/phase1-validation.md)保留为历史记录。
-
-## Phase 3 Console
-
-核心 SDK 仍固定在 Phase 6；两个可选设备头单独固定至 Phase 7.3，见 manifest.extensions。
-INFO 探测与可信启动 grant 分开；没有新增 feature bit，默认内存程序不取得设备。
-
-两个 checkout 同级且已有匹配的内核 ELF 时：
-
-```sh
-make console
-make -C ../Liberums run-external-console \
-  CONSOLE_ELF=../Aelthuvor/build/ael-console.elf
+make -j2                  # 默认仍为旧 cooperative first-fit，build/aelthuvor.elf
+make profiles             # first / best / preempt-first / preempt-best
+make console              # 旧 Phase 3 兼容 Console，build/ael-console.elf
+make test                 # 原有断言 + SDK/设备/Application/参考池宿主测试
+make integration LIBERUMS=../Liberums
 make console-integration LIBERUMS=../Liberums
+make phase4-integration LIBERUMS=../Liberums
 ```
 
-修改 Console 只需重建 Aelthuvor，运行目标不会重新链接内核。
-云端通过 QMP 注入真实 PS/2 事件，检查 IRQ1/用户态/VGA 并保存渲染截图；
-本地 WSL2 GTK 实体键盘交互仍待维护者确认。普通 RAM 撤销 E2E 仍未补齐，不以设备撤销测试代替。
+原 `ael_main(heap)` 不删除，与新入口通过显式对象分别选择。两个静态库都不含具体应用 main。
+`make abi11` 从固定 Phase 1 源码和旧 SDK 重建原映像，保留真实历史兼容验证。
+SDK 核心仍固定 Phase 6、设备扩展仍固定 Phase 7.3；六个头的来源、文件集合与 SHA256 门禁不变。
+**Kernel ABI 1.2 != Aelthuvor Application API 1.0**。
 
-阅读：[Phase 3 总览](docs/phase3-overview.md)、[设备 ABI](docs/phase3-device-abi.md)、
-[Console 与启动](docs/phase3-console.md)、[内存协作](docs/phase3-memory-integration.md)、
-[模块](docs/phase3-modules.md)、[实际验收](docs/phase3-validation.md)。
+新/旧 Console 均支持 help/clear/about/status/memtest/exit、US 键盘编辑、光标和滚动。
+可用既有 `make -C ../Liberums run-external-console CONSOLE_ELF=/absolute/path/to/app.elf`，
+修改 Console 不需要重链内核。设备由可信启动授予，INFO 发现不等于 ACQUIRE 获权。
+云端使用 QMP/PS2/GDB/显存，WSL2 GTK 实体键盘仍待人工验证。
+
+## 安全与范围
+
+First-fit/best-fit、16 字节对齐、块分裂/合并、回滚、trim/destroy 继续保留。
+严重 Heap 失效采取 exit(96)，不返回已知失效指针；设备错误停止服务并清理其余设备。
+查询无法消除强制撤销后的访问竞态，不保证透明恢复任意活跃页；外部活跃 RAM 撤销 E2E 仍是未补齐项目。
+
+没有 POSIX、文件系统、网络、动态链接、SMP、线程、fork、通用 spawn/IPC、设备复用或 GUI。
+普通 i686 无 NX，不承诺完整 W^X。旧裸指针在地址复用后不能区分新旧对象。
+
+阅读：[Phase 4 总览](docs/phase4-overview.md) → [应用 API](docs/phase4-application-api.md) →
+[独立应用](docs/phase4-independent-apps.md) → [模块](docs/phase4-modules.md) →
+[中立内核接口](docs/liberums-libos-interface-notes.md) → [独立 LibOS](docs/independent-libos-reference.md) →
+[兼容矩阵](docs/libos-compatibility-matrix.md) → [移植观察](docs/libos-porting-observations.md) →
+[验收](docs/phase4-validation.md) / [边界](docs/phase4-boundary-review.md)。
+Phase 1～3 的实现与验收文档保留为历史记录。

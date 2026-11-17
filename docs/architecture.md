@@ -1,4 +1,4 @@
-# Aelthuvor 架构（Phase 1～3）
+# Aelthuvor 架构（Phase 1～4）
 
 ```text
 独立 ELF _start -> ael_start -> ABI/额度探测 -> heap -> ael_main
@@ -27,5 +27,27 @@ LibOS 和应用在同一个不可信域；元数据位于 image/BSS。内核不�
 不增加默认内存示例的执行权限或运行依赖。两个设备头在 SDK 中单独固定来源。
 
 可信 external-console 配置授予设备并开启 IRQ0/IRQ1；用户态 INFO 只探测，ACQUIRE 才检查授权。
-仍只有一个外部应用域，LibOS 与应用静态组合；Peer 测试不代表多个外部 ELF/IPC 能力。
+Phase 3 路径只选择一个外部应用域，LibOS 与应用静态组合；Phase 4 的 Phase 8 多模块并存见后文，仍不代表通用 IPC。
 完整分层和未来维护入口见 [Phase 3 模块](phase3-modules.md)。
+
+## Phase 4：两条独立开发路线
+
+```text
+Aelthuvor 应用：ael_app_main(ctx)
+  -> App API / 可选 Console service
+  -> 原 memory/page/revoke 或 vga/keyboard/text
+  -> int 0x80
+
+另一 LibOS：自己的 app -> 固定对象池 -> 自己的 syscall/runtime/startup
+  -> int 0x80
+
+Liberums：同一个公开 ABI / ELF loader / Capability / MMU / IRQ / 域调度
+```
+
+新 adapter 显式实现旧 ael_main，绑定 opaque context，调用应用 callback 并统一终结。
+runtime/startup 不进入 archive，具体应用 main 也不进入 archive。旧入口和 Phase 3 Console 不移除。
+core 无设备反向依赖；设备 archive 只在应用明确选择时链接，grant 仍由内核独立验证。
+
+独立参考没有使用 Aelthuvor 的任何实现，只用受控公开 ABI。两者在 Phase 8 multi-external 下各占一域，
+不同 CR3、栈、PFN 和策略；不是同一地址空间中的共享运行时，也没有相互启动或 IPC。
+应用接口、低层接口和诊断的分类见 phase4-modules.md，保护边界见 phase4-boundary-review.md。
